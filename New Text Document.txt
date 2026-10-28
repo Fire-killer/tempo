@@ -1,0 +1,41 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+
+#define N 4000000      // حجم مصفوفة المبيعات
+#define T 4            // عدد النياسب
+
+int  sales[N];         // مصفوفة المبيعات (مشتركة)
+long sales_total = 0;  // العداد المشترك بين النياسب
+
+typedef struct { int start, end; } range_t;
+
+void *worker(void *arg) {
+    range_t *r = (range_t *)arg;
+    for (int i = r->start; i < r->end; i++)
+        sales_total += sales[i];     // <-- سبب Race Condition
+    return NULL;
+}
+
+int main(void) {
+    pthread_t th[T];
+    range_t   rg[T];
+    long expected = 0;
+
+    srand(1);
+    for (int i = 0; i < N; i++) {
+        sales[i] = rand() % 100;
+        expected += sales[i];
+    }
+
+    for (int t = 0; t < T; t++) {
+        rg[t].start = t * (N / T);
+        rg[t].end   = (t + 1) * (N / T);
+        pthread_create(&th[t], NULL, worker, &rg[t]);
+    }
+    for (int t = 0; t < T; t++)
+        pthread_join(th[t], NULL);
+
+    printf("Expected: %ld\nGot:      %ld\n", expected, sales_total);
+    return 0;
+}
