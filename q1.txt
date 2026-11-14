@@ -1,0 +1,64 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+
+#define N 4
+
+int main(void)
+{
+    int a = 20, b = 5;
+    int shared_test = 100;          /* local variable to test sharing */
+    int fd[N][2];                   /* one pipe per child */
+    const char *op_name[N] = {"a + b", "a - b", "a * b", "a / b"};
+    pid_t pid[N];
+
+    for (int i = 0; i < N; i++) {
+        if (pipe(fd[i]) == -1) {
+            perror("pipe");
+            exit(1);
+        }
+
+        pid[i] = fork();
+
+        if (pid[i] < 0) {
+            perror("fork");
+            exit(1);
+        }
+
+        if (pid[i] == 0) {               /* child */
+            close(fd[i][0]);             /* child only writes */
+
+            int result;
+            switch (i) {
+                case 0: result = a + b; break;
+                case 1: result = a - b; break;
+                case 2: result = a * b; break;
+                default: result = a / b; break;
+            }
+
+            shared_test += 10;           /* changes the child copy only */
+            printf("Child %d (PID=%d, PPID=%d): %s = %d, shared_test=%d\n",
+                   i + 1, getpid(), getppid(), op_name[i], result, shared_test);
+
+            write(fd[i][1], &result, sizeof(result));
+            close(fd[i][1]);
+            exit(0);                     /* child must not continue the loop */
+        }
+
+        close(fd[i][1]);                 /* parent only reads */
+    }
+
+    for (int i = 0; i < N; i++) {
+        int result;
+        read(fd[i][0], &result, sizeof(result));
+        close(fd[i][0]);
+        waitpid(pid[i], NULL, 0);
+        printf("Parent (PID=%d) received from child %d: %s = %d\n",
+               getpid(), i + 1, op_name[i], result);
+    }
+
+    printf("Parent: shared_test is still %d\n", shared_test);
+    return 0;
+}
