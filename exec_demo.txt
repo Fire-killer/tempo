@@ -1,0 +1,21 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/wait.h>
+
+int main(void)
+{
+    pid_t pid = fork();
+
+    if (pid == 0) {
+        printf("Child before exec: PID=%d, PPID=%d\n", getpid(), getppid());
+        fflush(stdout);
+        execlp("ps", "ps", "-o", "pid,ppid,comm", NULL);
+        perror("exec failed");          /* reached only if exec fails */
+        exit(1);
+    }
+
+    wait(NULL);
+    printf("Parent (PID=%d): child finished\n", getpid());
+    return 0;
+}
