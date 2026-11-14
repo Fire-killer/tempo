@@ -1,0 +1,97 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/wait.h>
+
+#define N 100
+
+typedef struct {
+    int    id;
+    double hours;     // ساعات العمل
+    double rate;      // اجر الساعة
+    int    absences;  // ايام الغياب
+} Employee;
+
+// الانبوب قد يعيد اقل من المطلوب لذلك نكرر حتى اكتمال البيانات
+static void read_full(int fd, void *buf, size_t n) {
+    size_t got = 0;
+    while (got < n) {
+        ssize_t r = read(fd, (char *)buf + got, n - got);
+        if (r <= 0) { perror("read"); exit(1); }
+        got += r;
+    }
+}
+static void write_full(int fd, const void *buf, size_t n) {
+    size_t put = 0;
+    while (put < n) {
+        ssize_t w = write(fd, (const char *)buf + put, n - put);
+        if (w < 0) { perror("write"); exit(1); }
+        put += w;
+    }
+}
+
+int main(void) {
+    int p2c1[2], c12p[2], p2c2[2], c22p[2];   // 4 انابيب
+    if (pipe(p2c1) || pipe(c12p) || pipe(p2c2) || pipe(c22p)) { perror("pipe"); exit(1); }
+
+    // ---------- الابن الاول: الرواتب الاساسية ----------
+    pid_t pid1 = fork();
+    if (pid1 < 0) { perror("fork"); exit(1); }
+    if (pid1 == 0) {
+        close(p2c1[1]); close(c12p[0]);                  // اغلاق الاطراف غير المستخدمة
+        close(p2c2[0]); close(p2c2[1]); close(c22p[0]); close(c22p[1]);
+        Employee emp[N]; double basic[N];
+        read_full(p2c1[0], emp, sizeof emp);
+        for (int i = 0; i < N; i++) basic[i] = emp[i].hours * emp[i].rate;
+        write_full(c12p[1], basic, sizeof basic);
+        close(p2c1[0]); close(c12p[1]);
+        _exit(0);
+    }
+
+    // ---------- الابن الثاني: الخصومات ----------
+    pid_t pid2 = fork();
+    if (pid2 < 0) { perror("fork"); exit(1); }
+    if (pid2 == 0) {
+        close(p2c2[1]); close(c22p[0]);
+        close(p2c1[0]); close(p2c1[1]); close(c12p[0]); close(c12p[1]);
+        Employee emp[N]; double ded[N];
+        read_full(p2c2[0], emp, sizeof emp);
+        for (int i = 0; i < N; i++)
+            ded[i] = emp[i].hours * emp[i].rate * 0.10 + emp[i].absences * 20.0; // ضريبة 10% + 20 عن كل يوم غياب
+        write_full(c22p[1], ded, sizeof ded);
+        close(p2c2[0]); close(c22p[1]);
+        _exit(0);
+    }
+
+    // ---------- الاب ----------
+    close(p2c1[0]); close(c12p[1]); close(p2c2[0]); close(c22p[1]);
+
+    Employee emp[N];
+    for (int i = 0; i < N; i++) {              // قراءة بيانات الموظفين
+        emp[i].id = i + 1;
+        emp[i].hours = 160;
+        emp[i].rate = 10 + (i % 5);
+        emp[i].absences = i % 3;
+    }
+    write_full(p2c1[1], emp, sizeof emp); close(p2c1[1]);
+    write_full(p2c2[1], emp, sizeof emp); close(p2c2[1]);
+
+    double basic[N], ded[N];
+    read_full(c12p[0], basic, sizeof basic); close(c12p[0]);
+    read_full(c22p[0], ded,   sizeof ded);   close(c22p[0]);
+
+    waitpid(pid1, NULL, 0);
+    waitpid(pid2, NULL, 0);
+
+    double total = 0;
+    printf("ID\tBasic\tDeduct\tNet\n");
+    for (int i = 0; i < N; i++) {
+        double net = basic[i] - ded[i];
+        total += net;
+        if (i < 10 || i >= N - 3)
+            printf("%d\t%.2f\t%.2f\t%.2f\n", emp[i].id, basic[i], ded[i], net);
+        else if (i == 10) printf("...\n");
+    }
+    printf("Total net payroll for %d employees = %.2f\n", N, total);
+    return 0;
+}
